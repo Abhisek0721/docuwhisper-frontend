@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Upload, Button, Card, Input, List, message } from "antd";
+import { useEffect, useRef, useState } from "react";
+import { Upload, Button, Card, Input, List } from "antd";
 import { UploadOutlined, SendOutlined, AudioOutlined } from "@ant-design/icons";
 import Sidebar from "../components/Sidebar";
 import { useQuery } from "@tanstack/react-query";
@@ -19,6 +19,7 @@ const Home = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState("");
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
+  const speechMessage = useRef<SpeechSynthesisUtterance>(new SpeechSynthesisUtterance());
 
   const {
     data: allDocuments,
@@ -29,6 +30,10 @@ const Home = () => {
     queryKey: ["allDocumentsKey"],
     queryFn: () => getAllDocuments(),
   });
+
+  useEffect(() => {
+    window.speechSynthesis.speak(speechMessage.current);
+  }, [speechMessage])
 
   const handleUpload = async (info: any) => {
     try {
@@ -49,6 +54,8 @@ const Home = () => {
       const userQuery = inputText;
       setInputText("");
       const response = await askQueryToAI({documentId: selectedDocument?.id, query: userQuery});
+      speechMessage.current.text = response?.data?.answer;
+      window.speechSynthesis.speak(speechMessage.current);
       setMessages((prevMessages: any) => [...prevMessages, { text: response?.data?.answer, sender: "ai" }]);
       setInputText("");
     } catch (error: any) {
@@ -57,6 +64,7 @@ const Home = () => {
   };
 
   const handleVoiceInput = () => {
+    window.speechSynthesis.cancel();
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
@@ -68,7 +76,7 @@ const Home = () => {
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      message.error("Voice recognition error: " + event.error);
+      toast.error("Voice recognition error: " + event.error);
     };
   };
   
