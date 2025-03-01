@@ -8,7 +8,9 @@ import { toast } from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
 import { ApiResponse, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "../types/HomeType";
 import SocketService from "../services/socketService";
-
+import GoogleDrivePickerButton from "../components/GoogleDrivePicker";
+import { GoogleOAuthProvider } from "@react-oauth/google";
+import { envConstant } from "../constants";
 
 const CustomParagraph = ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
   <p className="mb-4 last:mb-0" {...props}>{children}</p>
@@ -38,21 +40,21 @@ const Home = () => {
   useEffect(() => {
     // Connect to WebSocket server
     const socket = socketService.current.connect();
-
+    
     // Set up event listeners
     socket.on('connect', () => {
       console.log('Connected to WebSocket server');
     });
-
-    socketService.current.on('processing', (data) => {
+    
+    socketService.current.on('processing', (data: any) => {
       setIsLoading(true);
     });
-
+    
     socketService.current.on('response', (data) => {
       setMessages((prevMessages) => {
         const newMessages = [...prevMessages];
         const lastMessage = newMessages[newMessages.length - 1];
-
+        
         if (lastMessage && lastMessage.sender === 'ai') {
           // Create a new object to ensure React detects the change
           const updatedMessage = {
@@ -66,18 +68,18 @@ const Home = () => {
         }
       });
     });
-
+    
     socketService.current.on('done', (data) => {
       setIsLoading(false);
       speechMessage.current.text = data.text;
       window.speechSynthesis.speak(speechMessage.current);
     });
-
+    
     socketService.current.on('error', (data) => {
       toast.error(data.message || "Error processing your request");
       setIsLoading(false);
     });
-
+    
     // Cleanup function
     return () => {
       socketService.current.disconnect();
@@ -90,45 +92,53 @@ const Home = () => {
     }
   }, [messages]);
 
-  const handleUpload = async (info: any) => {
+  const handleFileUpload = async (file: File) => {
     try {
-      setPdfFile(info.file);
-      const response = await uploadDocument(info.file);
+      setPdfFile(file);
+      const response = await uploadDocument(file);
       setSelectedDocument(response?.data);
       refetchAllDocuments();
-      toast.success(response?.message || `${info.file.name} uploaded successfully`);
+      toast.success(response?.message || `${file.name} uploaded successfully`);
     } catch (error: any) {
       toast.error(error?.response?.data?.message || "Something went wrong");
     }
   };
 
+  const handleUpload = async (info: any) => {
+    await handleFileUpload(info.file);
+  };
+
+  const handleGoogleDriveFileSelect = async (file: File) => {
+    await handleFileUpload(file);
+  };
+
   const handleSend = async () => {
     if (!inputText.trim() || isLoading) return;
-
     // Add user message to chat
     setMessages((prev) => [...prev, { text: inputText, sender: "user" }]);
-
     // Send query via socket service
     socketService.current.sendQuery(selectedDocument?.id, inputText);
-
     // Reset input field
     setInputText("");
   };
 
   const handleVoiceInput = () => {
-    if(window.speechSynthesis.speaking) {
+    if (window.speechSynthesis.speaking) {
       window.speechSynthesis.cancel();
       toast.success("AI speaking stopped");
       return;
     }
+    
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
     recognition.start();
+    
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript;
       setInputText(transcript);
     };
+    
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       toast.error("Voice recognition error: " + event.error);
     };
@@ -137,7 +147,6 @@ const Home = () => {
   // Function to handle document context for AI
   const updateDocumentContext = () => {
     if (selectedDocument && socketService.current.getSocket()) {
-      // You might need to create a new event in your NestJS backend for this
       socketService.current.getSocket()?.emit('setDocumentContext', { documentId: selectedDocument.id });
     }
   };
@@ -152,18 +161,31 @@ const Home = () => {
       {allDocumentsError ? (
         <div className="text-red-500">Error loading documents</div>
       ) : (
-        <Sidebar refetchAllDocuments={refetchAllDocuments} uploadedFiles={allDocumentsLoading ? [] : (allDocuments?.data || [])} setSelectedDocument={setSelectedDocument} />
+        <Sidebar 
+          refetchAllDocuments={refetchAllDocuments} 
+          uploadedFiles={allDocumentsLoading ? [] : (allDocuments?.data || [])}
+          setSelectedDocument={setSelectedDocument} 
+        />
       )}
-
+      
       <div className="flex flex-col items-center p-6 min-h-screen w-full mt-16">
         <Card className="w-full max-w-lg p-4 shadow-lg rounded-2xl">
           <h2 className="text-xl font-semibold text-center mb-4">Upload PDF and Chat with AI</h2>
           <p className="text-sm text-gray-600 mb-4">Selected Document: {selectedDocument?.filename}</p>
-          <Upload beforeUpload={() => false} onChange={handleUpload} showUploadList={false}>
-            <Button icon={<UploadOutlined />}>Click to Upload PDF</Button>
-          </Upload>
+          
+          <div className="flex gap-4">
+            <Upload beforeUpload={() => false} onChange={handleUpload} showUploadList={false}>
+              <Button icon={<UploadOutlined />}>Click to Upload PDF</Button>
+            </Upload>
+            
+            <GoogleOAuthProvider clientId={envConstant.GOOGLE_CLIENT_ID}>
+              <GoogleDrivePickerButton onFileSelect={handleGoogleDriveFileSelect} buttonText="From Google Drive" />
+            </GoogleOAuthProvider>
+          </div>
+          
           {pdfFile && <p className="mt-2 text-sm text-gray-600">Uploaded: {pdfFile.name}</p>}
         </Card>
+        
         <Card className="w-full max-w-lg mt-4 p-4 shadow-lg rounded-2xl">
           <div className="max-h-80 overflow-auto">
             <List
@@ -176,6 +198,7 @@ const Home = () => {
                 </List.Item>
               )}
             />
+            
             {isLoading && (
               <div className="flex items-center p-2">
                 <div className="animate-pulse flex space-x-1">
@@ -186,8 +209,10 @@ const Home = () => {
                 <span className="ml-2 text-sm text-gray-500">AI is thinking...</span>
               </div>
             )}
+            
             <div ref={messagesEndRef} />
           </div>
+          
           <div className="flex mt-4">
             <Input
               className="flex-1"
