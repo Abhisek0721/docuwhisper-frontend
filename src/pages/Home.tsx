@@ -4,11 +4,10 @@ import { UploadOutlined, SendOutlined, AudioOutlined } from "@ant-design/icons";
 import Sidebar from "../components/Sidebar";
 import { useQuery } from "@tanstack/react-query";
 import { getAllDocuments, uploadDocument } from "../api/queries/documentQueries";
-import { askQueryToAI } from "../api/queries/chatQueries";
 import { toast } from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
 import { ApiResponse, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "../types/HomeType";
-
+import SocketService from "../services/socketService";
 
 const CustomParagraph = ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
   <p className="mb-4 last:mb-0" {...props}>{children}</p>
@@ -19,8 +18,11 @@ const Home = () => {
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState("");
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const socketService = useRef(SocketService.getInstance());
   const speechMessage = useRef<SpeechSynthesisUtterance>(new SpeechSynthesisUtterance());
-
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  
   const {
     data: allDocuments,
     isLoading: allDocumentsLoading,
@@ -30,11 +32,58 @@ const Home = () => {
     queryKey: ["allDocumentsKey"],
     queryFn: () => getAllDocuments(),
   });
-
+  
+  // Initialize socket connection
   useEffect(() => {
-    window.speechSynthesis.speak(speechMessage.current);
-  }, [speechMessage])
-
+    // Connect to WebSocket server
+    const socket = socketService.current.connect();
+    
+    // Set up event listeners
+    socket.on('connect', () => {
+      console.log('Connected to WebSocket server');
+    });
+    
+    socketService.current.on('processing', (data) => {
+      setIsLoading(true);
+    });
+    
+    socketService.current.on('response', (data) => {
+      setMessages((prevMessages) => {
+        const newMessages = [...prevMessages];
+        const lastMessage = newMessages[newMessages.length - 1];
+        
+        if (lastMessage && lastMessage.sender === 'ai') {
+          lastMessage.text += data.text;
+          return newMessages;
+        } else {
+          return [...prevMessages, { text: data.text, sender: 'ai' }];
+        }
+      });
+    });
+    
+    socketService.current.on('done', (data) => {
+      setIsLoading(false);
+      speechMessage.current.text = data.text;
+      window.speechSynthesis.speak(speechMessage.current);
+    });
+    
+    socketService.current.on('error', (data) => {
+      toast.error(data.message || "Error processing your request");
+      setIsLoading(false);
+    });
+    
+    // Cleanup function
+    return () => {
+      socketService.current.disconnect();
+    };
+  }, []);
+  
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+  
   const handleUpload = async (info: any) => {
     try {
       setPdfFile(info.file);
@@ -46,41 +95,48 @@ const Home = () => {
       toast.error(error?.response?.data?.message || "Something went wrong");
     }
   };
-
+  
   const handleSend = async () => {
-    if (!inputText.trim()) return;
-    try {
-      setMessages([...messages, { text: inputText, sender: "user" }]);
-      const userQuery = inputText;
-      setInputText("");
-      const response = await askQueryToAI({documentId: selectedDocument?.id, query: userQuery});
-      speechMessage.current.text = response?.data?.answer;
-      window.speechSynthesis.speak(speechMessage.current);
-      setMessages((prevMessages: any) => [...prevMessages, { text: response?.data?.answer, sender: "ai" }]);
-      setInputText("");
-    } catch (error: any) {
-      toast.error(error?.response?.data?.message || "Something went wrong");
-    }
+    if (!inputText.trim() || isLoading) return;
+    
+    // Add user message to chat
+    setMessages((prev) => [...prev, { text: inputText, sender: "user" }]);
+    
+    // Send query via socket service
+    socketService.current.sendQuery(selectedDocument?.id, inputText);
+    
+    // Reset input field
+    setInputText("");
   };
-
+  
   const handleVoiceInput = () => {
     window.speechSynthesis.cancel();
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
     recognition.start();
-
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript;
       setInputText(transcript);
     };
-
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       toast.error("Voice recognition error: " + event.error);
     };
   };
   
-
+  // Function to handle document context for AI
+  const updateDocumentContext = () => {
+    if (selectedDocument && socketService.current.getSocket()) {
+      // You might need to create a new event in your NestJS backend for this
+      socketService.current.getSocket()?.emit('setDocumentContext', { documentId: selectedDocument.id });
+    }
+  };
+  
+  // Update document context when selected document changes
+  useEffect(() => {
+    updateDocumentContext();
+  }, [selectedDocument]);
+  
   return (
     <div className="flex bg-gray-100">
       {allDocumentsError ? (
@@ -98,23 +154,29 @@ const Home = () => {
           {pdfFile && <p className="mt-2 text-sm text-gray-600">Uploaded: {pdfFile.name}</p>}
         </Card>
         <Card className="w-full max-w-lg mt-4 p-4 shadow-lg rounded-2xl">
-          <List
-            className="max-h-80 overflow-auto"
-            dataSource={messages}
-            renderItem={(item) => (
-              <List.Item className={item.sender === "user" ? "text-right" : "text-left"}>
-                <div className="prose prose-sm max-w-none">
-                  <ReactMarkdown
-                    components={{
-                      p: CustomParagraph,
-                    }}
-                  >
-                    {item.text}
-                  </ReactMarkdown>
+          <div className="max-h-80 overflow-auto">
+            <List
+              dataSource={messages}
+              renderItem={(item) => (
+                <List.Item className={item.sender === "user" ? "text-right" : "text-left"}>
+                  <div className={`prose prose-sm max-w-none ${item.sender === "user" ? "ml-auto" : "mr-auto"} p-2 rounded-lg ${item.sender === "user" ? "bg-blue-100" : "bg-gray-100"}`}>
+                    <ReactMarkdown components={{ p: CustomParagraph }}>{item.text}</ReactMarkdown>
+                  </div>
+                </List.Item>
+              )}
+            />
+            {isLoading && (
+              <div className="flex items-center p-2">
+                <div className="animate-pulse flex space-x-1">
+                  <div className="h-2 w-2 bg-gray-400 rounded-full"></div>
+                  <div className="h-2 w-2 bg-gray-400 rounded-full"></div>
+                  <div className="h-2 w-2 bg-gray-400 rounded-full"></div>
                 </div>
-              </List.Item>
+                <span className="ml-2 text-sm text-gray-500">AI is thinking...</span>
+              </div>
             )}
-          />
+            <div ref={messagesEndRef} />
+          </div>
           <div className="flex mt-4">
             <Input
               className="flex-1"
@@ -122,9 +184,21 @@ const Home = () => {
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Type a message..."
               onPressEnter={handleSend}
+              disabled={isLoading}
             />
-            <Button icon={<AudioOutlined />} onClick={handleVoiceInput} className="ml-2" />
-            <Button type="primary" icon={<SendOutlined />} onClick={handleSend} className="ml-2" />
+            <Button 
+              icon={<AudioOutlined />} 
+              onClick={handleVoiceInput} 
+              className="ml-2" 
+              disabled={isLoading}
+            />
+            <Button 
+              type="primary" 
+              icon={<SendOutlined />} 
+              onClick={handleSend} 
+              className="ml-2" 
+              loading={isLoading}
+            />
           </div>
         </Card>
       </div>
