@@ -9,6 +9,7 @@ import ReactMarkdown from "react-markdown";
 import { ApiResponse, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "../types/HomeType";
 import SocketService from "../services/socketService";
 
+
 const CustomParagraph = ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
   <p className="mb-4 last:mb-0" {...props}>{children}</p>
 );
@@ -22,7 +23,7 @@ const Home = () => {
   const socketService = useRef(SocketService.getInstance());
   const speechMessage = useRef<SpeechSynthesisUtterance>(new SpeechSynthesisUtterance());
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  
+
   const {
     data: allDocuments,
     isLoading: allDocumentsLoading,
@@ -32,31 +33,31 @@ const Home = () => {
     queryKey: ["allDocumentsKey"],
     queryFn: () => getAllDocuments(),
   });
-  
+
   // Initialize socket connection
   useEffect(() => {
     // Connect to WebSocket server
     const socket = socketService.current.connect();
-    
+
     // Set up event listeners
     socket.on('connect', () => {
       console.log('Connected to WebSocket server');
     });
-    
+
     socketService.current.on('processing', (data) => {
       setIsLoading(true);
     });
-    
+
     socketService.current.on('response', (data) => {
       setMessages((prevMessages) => {
         const newMessages = [...prevMessages];
         const lastMessage = newMessages[newMessages.length - 1];
-        
+
         if (lastMessage && lastMessage.sender === 'ai') {
           // Create a new object to ensure React detects the change
-          const updatedMessage = { 
-            ...lastMessage, 
-            text: lastMessage.text + data.text 
+          const updatedMessage = {
+            ...lastMessage,
+            text: lastMessage.text + data.text
           };
           newMessages[newMessages.length - 1] = updatedMessage;
           return newMessages;
@@ -65,30 +66,30 @@ const Home = () => {
         }
       });
     });
-    
+
     socketService.current.on('done', (data) => {
       setIsLoading(false);
       speechMessage.current.text = data.text;
       window.speechSynthesis.speak(speechMessage.current);
     });
-    
+
     socketService.current.on('error', (data) => {
       toast.error(data.message || "Error processing your request");
       setIsLoading(false);
     });
-    
+
     // Cleanup function
     return () => {
       socketService.current.disconnect();
     };
   }, []);
-  
+
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
-  
+
   const handleUpload = async (info: any) => {
     try {
       setPdfFile(info.file);
@@ -100,22 +101,26 @@ const Home = () => {
       toast.error(error?.response?.data?.message || "Something went wrong");
     }
   };
-  
+
   const handleSend = async () => {
     if (!inputText.trim() || isLoading) return;
-    
+
     // Add user message to chat
     setMessages((prev) => [...prev, { text: inputText, sender: "user" }]);
-    
+
     // Send query via socket service
     socketService.current.sendQuery(selectedDocument?.id, inputText);
-    
+
     // Reset input field
     setInputText("");
   };
-  
+
   const handleVoiceInput = () => {
-    window.speechSynthesis.cancel();
+    if(window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+      toast.success("AI speaking stopped");
+      return;
+    }
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
@@ -128,7 +133,7 @@ const Home = () => {
       toast.error("Voice recognition error: " + event.error);
     };
   };
-  
+
   // Function to handle document context for AI
   const updateDocumentContext = () => {
     if (selectedDocument && socketService.current.getSocket()) {
@@ -136,12 +141,12 @@ const Home = () => {
       socketService.current.getSocket()?.emit('setDocumentContext', { documentId: selectedDocument.id });
     }
   };
-  
+
   // Update document context when selected document changes
   useEffect(() => {
     updateDocumentContext();
   }, [selectedDocument]);
-  
+
   return (
     <div className="flex bg-gray-100">
       {allDocumentsError ? (
@@ -149,6 +154,7 @@ const Home = () => {
       ) : (
         <Sidebar refetchAllDocuments={refetchAllDocuments} uploadedFiles={allDocumentsLoading ? [] : (allDocuments?.data || [])} setSelectedDocument={setSelectedDocument} />
       )}
+
       <div className="flex flex-col items-center p-6 min-h-screen w-full mt-16">
         <Card className="w-full max-w-lg p-4 shadow-lg rounded-2xl">
           <h2 className="text-xl font-semibold text-center mb-4">Upload PDF and Chat with AI</h2>
@@ -191,17 +197,17 @@ const Home = () => {
               onPressEnter={handleSend}
               disabled={isLoading}
             />
-            <Button 
-              icon={<AudioOutlined />} 
-              onClick={handleVoiceInput} 
-              className="ml-2" 
+            <Button
+              icon={<AudioOutlined />}
+              onClick={handleVoiceInput}
+              className="ml-2"
               disabled={isLoading}
             />
-            <Button 
-              type="primary" 
-              icon={<SendOutlined />} 
-              onClick={handleSend} 
-              className="ml-2" 
+            <Button
+              type="primary"
+              icon={<SendOutlined />}
+              onClick={handleSend}
+              className="ml-2"
               loading={isLoading}
             />
           </div>
