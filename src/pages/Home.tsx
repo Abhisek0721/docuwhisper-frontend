@@ -53,7 +53,12 @@ const Home = () => {
         const lastMessage = newMessages[newMessages.length - 1];
         
         if (lastMessage && lastMessage.sender === 'ai') {
-          lastMessage.text += data.text;
+          // Create a new object to ensure React detects the change
+          const updatedMessage = { 
+            ...lastMessage, 
+            text: lastMessage.text + data.text 
+          };
+          newMessages[newMessages.length - 1] = updatedMessage;
           return newMessages;
         } else {
           return [...prevMessages, { text: data.text, sender: 'ai' }];
