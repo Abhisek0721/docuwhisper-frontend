@@ -20,7 +20,7 @@ const loadScript = (src: string): Promise<void> => {
     const script = document.createElement('script');
     script.src = src;
     script.onload = () => resolve();
-    script.onerror = (err: any) => reject(err);
+    script.onerror = (err) => reject(new Error('Failed to load script: ' + script.src));
     document.body.appendChild(script);
   });
 };

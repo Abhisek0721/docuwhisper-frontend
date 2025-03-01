@@ -133,12 +133,12 @@ const Home = () => {
     const recognition = new SpeechRecognition();
     recognition.lang = "en-US";
     recognition.start();
-    
+
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript;
       setInputText(transcript);
     };
-    
+
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       toast.error("Voice recognition error: " + event.error);
     };

@@ -15,6 +15,9 @@ const Sidebar = ({
   const navigate = useNavigate();
 
   const handleLogout = () => {
+    if (window.speechSynthesis.speaking) {
+      window.speechSynthesis.cancel();
+    }
     localStorage.clear();
     navigate("/login");
   };
