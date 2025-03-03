@@ -11,16 +11,20 @@ export interface ApiResponse {
 
 export interface SpeechRecognition extends EventTarget {
   continuous: boolean;
+  interimResults: boolean;
   lang: string;
   start(): void;
   stop(): void;
   onresult: (event: SpeechRecognitionEvent) => void;
   onerror: (event: SpeechRecognitionErrorEvent) => void;
+  onend: () => void;
 }
 
 export interface SpeechRecognitionEvent {
   results: {
+    length: number;
     [index: number]: {
+      isFinal: boolean;
       [index: number]: {
         transcript: string;
       };

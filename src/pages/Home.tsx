@@ -360,11 +360,11 @@ const Home = () => {
     await handleFileUpload(file);
   };
 
-  const handleSend = async () => {
-    if (!inputText.trim() || isLoading) return;
+  const handleSend = async (userQuery: string = inputText) => {
+    if (!userQuery.trim() || isLoading) return;
     
     // Add user message to chat
-    setMessages((prev) => [...prev, { text: inputText, sender: "user" }]);
+    setMessages((prev) => [...prev, { text: userQuery, sender: "user" }]);
     
     // Stop any current speech
     if (isSpeaking) {
@@ -375,7 +375,7 @@ const Home = () => {
     rateLimitDelay.current = 250;
     
     // Send query via socket service
-    socketService.current.sendQuery(selectedDocument?.id, inputText);
+    socketService.current.sendQuery(selectedDocument?.id, userQuery);
     
     // Reset input field
     setInputText("");
@@ -401,8 +401,9 @@ const Home = () => {
     recognition.onresult = (event: SpeechRecognitionEvent) => {
       const transcript = event.results[0][0].transcript;
       setInputText(transcript);
+      handleSend(transcript);
     };
-    
+
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       toast.error("Voice recognition error: " + event.error);
     };
@@ -510,7 +511,7 @@ const Home = () => {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               placeholder="Type a message..."
-              onPressEnter={handleSend}
+              onPressEnter={() => handleSend()}
               disabled={isLoading}
             />
             <Button
@@ -524,7 +525,7 @@ const Home = () => {
             <Button
               type="primary"
               icon={<SendOutlined />}
-              onClick={handleSend}
+              onClick={() => handleSend()}
               className="ml-2"
               loading={isLoading}
             />
