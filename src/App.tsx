@@ -4,6 +4,7 @@ import Home from './pages/Home';
 import { Toaster } from 'react-hot-toast';
 import { getUserAccessToken } from './utils/localStorageUtils';
 import { ReactNode } from 'react';
+import { Conversation } from './components/Conversation';
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
   const accessToken = getUserAccessToken();
@@ -28,6 +29,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/conversation" element={<Conversation />} />
       </Routes>
     </BrowserRouter>
   );
