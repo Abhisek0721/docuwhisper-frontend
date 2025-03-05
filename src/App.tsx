@@ -5,6 +5,7 @@ import { Toaster } from 'react-hot-toast';
 import { getUserAccessToken } from './utils/localStorageUtils';
 import { ReactNode } from 'react';
 import { Conversation } from './components/Conversation';
+import ChatGptRealtime from './components/ChatGptRealtime';
 
 const ProtectedRoute = ({ children }: { children: ReactNode }) => {
   const accessToken = getUserAccessToken();
@@ -30,6 +31,7 @@ function App() {
           }
         />
         <Route path="/conversation" element={<Conversation />} />
+        <Route path="/chatgpt-realtime" element={<ChatGptRealtime />} />
       </Routes>
     </BrowserRouter>
   );

@@ -11,6 +11,7 @@ import SocketService from "../services/socketService";
 import GoogleDrivePickerButton from "../components/GoogleDrivePicker";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { envConstant } from "../constants";
+
 const { Option } = Select;
 
 const CustomParagraph = ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
@@ -25,6 +26,7 @@ const Home = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState("9BWtsMINqrJLrRacOk9x"); // Default ElevenLabs voice ID
+  
   const socketService = useRef(SocketService.getInstance());
   const audioQueue = useRef<Array<{ url: string, text: string }>>([]);
   const textToProcessQueue = useRef<Array<string>>([]);
@@ -34,6 +36,7 @@ const Home = () => {
   const chunkTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const currentAudio = useRef<HTMLAudioElement | null>(null);
+  
   // Rate limiting params
   const rateLimitDelay = useRef(250); // Start with 250ms delay between requests
   const maxRateLimitDelay = 2000; // Max 2 seconds between requests
@@ -48,7 +51,7 @@ const Home = () => {
     queryKey: ["allDocumentsKey"],
     queryFn: () => getAllDocuments(),
   });
-
+  
   // Process the audio queue
   const processAudioQueue = async () => {
     if (isProcessingQueue.current || audioQueue.current.length === 0) return;
@@ -90,7 +93,7 @@ const Home = () => {
       processAudioQueue();
     }
   };
-
+  
   // Process text queue with rate limiting
   const processTextQueue = async () => {
     if (isProcessingTextQueue.current || textToProcessQueue.current.length === 0) return;
@@ -178,7 +181,7 @@ const Home = () => {
       }, rateLimitDelay.current * 2);
     }
   };
-
+  
   // Convert text chunk to speech with ElevenLabs
   const convertChunkToSpeech = async (text: string) => {
     if (!text.trim()) return;
@@ -191,7 +194,7 @@ const Home = () => {
       processTextQueue();
     }
   };
-
+  
   // Process text chunks with debouncing
   const processTextChunk = () => {
     if (currentChunk.current.trim()) {
@@ -203,7 +206,7 @@ const Home = () => {
     
     chunkTimeout.current = null;
   };
-
+  
   // Optimize chunking for better speech and fewer API calls
   const queueTextForSpeech = (text: string) => {
     // Add to current chunk
@@ -246,7 +249,7 @@ const Home = () => {
       chunkTimeout.current = setTimeout(processTextChunk, 800);
     }
   };
-
+  
   // Function to stop speaking
   const stopSpeaking = () => {
     if (currentAudio.current) {
@@ -273,7 +276,7 @@ const Home = () => {
     }
     currentChunk.current = "";
   };
-
+  
   // Initialize socket connection
   useEffect(() => {
     // Connect to WebSocket server
@@ -333,13 +336,13 @@ const Home = () => {
       stopSpeaking();
     };
   }, []);
-
+  
   useEffect(() => {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages]);
-
+  
   const handleFileUpload = async (file: File) => {
     try {
       setPdfFile(file);
@@ -351,15 +354,15 @@ const Home = () => {
       toast.error(error?.response?.data?.message || "Something went wrong");
     }
   };
-
+  
   const handleUpload = async (info: any) => {
     await handleFileUpload(info.file);
   };
-
+  
   const handleGoogleDriveFileSelect = async (file: File) => {
     await handleFileUpload(file);
   };
-
+  
   const handleSend = async (userQuery: string = inputText) => {
     if (!userQuery.trim() || isLoading) return;
     
@@ -380,11 +383,12 @@ const Home = () => {
     // Reset input field
     setInputText("");
   };
-
+  
+  // Enhanced voice input function with interruption capability
   const handleVoiceInput = () => {
+    // If AI is speaking, stop it first then start voice recognition
     if (isSpeaking) {
       stopSpeaking();
-      return;
     }
     
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -403,24 +407,26 @@ const Home = () => {
       setInputText(transcript);
       handleSend(transcript);
     };
-
+    
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      toast.error("Voice recognition error: " + event.error);
+      if (event.error !== 'no-speech') {
+        toast.error("Voice recognition error: " + event.error);
+      }
     };
   };
-
+  
   // Function to handle document context for AI
   const updateDocumentContext = () => {
     if (selectedDocument && socketService.current.getSocket()) {
       socketService.current.getSocket()?.emit('setDocumentContext', { documentId: selectedDocument.id });
     }
   };
-
+  
   // Update document context when selected document changes
   useEffect(() => {
     updateDocumentContext();
   }, [selectedDocument]);
-
+  
   // Effect to handle voice change
   useEffect(() => {
     // If speaking and voice changes, restart with new voice
@@ -432,7 +438,7 @@ const Home = () => {
       }
     }
   }, [selectedVoice]);
-
+  
   // ElevenLabs voice options
   const voiceOptions = [
     { id: "9BWtsMINqrJLrRacOk9x", name: "Aria" },
@@ -442,7 +448,7 @@ const Home = () => {
     { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella" },
     { id: "MF3mGyEYCl7XYWbV9V6O", name: "Antoni" },
   ];
-
+  
   return (
     <div className="flex bg-gray-100">
       {allDocumentsError ? (
@@ -520,8 +526,19 @@ const Home = () => {
               className="ml-2"
               disabled={isLoading}
               danger={isSpeaking}
-              title={isSpeaking ? "Stop Speaking" : "Voice Input"}
+              title={isSpeaking ? "Interrupt AI & Speak" : "Voice Input"}
             />
+            {isSpeaking && (
+              <Button
+                type="default"
+                danger
+                onClick={stopSpeaking}
+                className="ml-2"
+                title="Stop AI Speaking"
+              >
+                Stop
+              </Button>
+            )}
             <Button
               type="primary"
               icon={<SendOutlined />}

@@ -6,5 +6,11 @@ export const envConstant = {
   GOOGLE_CLIENT_ID: import.meta.env.VITE_GOOGLE_CLIENT_ID || "",
 
   ELEVEN_LABS_API_KEY: import.meta.env.VITE_ELEVEN_LABS_API_KEY || "",
+
+  OPENAI_API_KEY: import.meta.env.VITE_OPENAI_API_KEY || "",
+
+  OPENAI_ORG_ID: import.meta.env.VITE_OPENAI_ORG_ID || "",
+
+  OPENAI_PROJECT_ID: import.meta.env.VITE_OPENAI_PROJECT_ID || "",
 };
 
