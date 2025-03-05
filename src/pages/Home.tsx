@@ -1,31 +1,29 @@
 import { useEffect, useRef, useState } from "react";
-import { Upload, Button, Card, Input, List, Select } from "antd";
-import { UploadOutlined, SendOutlined, AudioOutlined } from "@ant-design/icons";
+import { Upload, Button, Card, List } from "antd";
+import { UploadOutlined } from "@ant-design/icons";
 import Sidebar from "../components/Sidebar";
 import { useQuery } from "@tanstack/react-query";
 import { getAllDocuments, uploadDocument } from "../api/queries/documentQueries";
 import { toast } from "react-hot-toast";
 import ReactMarkdown from "react-markdown";
-import { ApiResponse, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "../types/HomeType";
+import { ApiResponse, SpeechRecognition, SpeechRecognitionEvent, SpeechRecognitionErrorEvent } from "../types/HomeType";
 import SocketService from "../services/socketService";
 import GoogleDrivePickerButton from "../components/GoogleDrivePicker";
 import { GoogleOAuthProvider } from "@react-oauth/google";
 import { envConstant } from "../constants";
 
-const { Option } = Select;
 
 const CustomParagraph = ({ children, ...props }: React.HTMLAttributes<HTMLParagraphElement>) => (
   <p className="mb-4 last:mb-0" {...props}>{children}</p>
 );
 
 const Home = () => {
-  const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
-  const [inputText, setInputText] = useState("");
   const [selectedDocument, setSelectedDocument] = useState<any>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [selectedVoice, setSelectedVoice] = useState("9BWtsMINqrJLrRacOk9x"); // Default ElevenLabs voice ID
+  const [selectedVoice, setSelectedVoice] = useState("9BWtsMINqrJLrRacOk9x");
+  const [isConversationActive, setIsConversationActive] = useState(false);
   
   const socketService = useRef(SocketService.getInstance());
   const audioQueue = useRef<Array<{ url: string, text: string }>>([]);
@@ -36,11 +34,13 @@ const Home = () => {
   const chunkTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const currentAudio = useRef<HTMLAudioElement | null>(null);
+  const [isListening, setIsListening] = useState(false);
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   
   // Rate limiting params
-  const rateLimitDelay = useRef(250); // Start with 250ms delay between requests
-  const maxRateLimitDelay = 2000; // Max 2 seconds between requests
-  const rateLimitBackoff = useRef(1.5); // Backoff multiplier
+  const rateLimitDelay = useRef(250);
+  const maxRateLimitDelay = 2000;
+  const rateLimitBackoff = useRef(1.5);
   
   const {
     data: allDocuments,
@@ -51,6 +51,68 @@ const Home = () => {
     queryKey: ["allDocumentsKey"],
     queryFn: () => getAllDocuments(),
   });
+
+  // Initialize voice recognition
+  useEffect(() => {
+    if (!isConversationActive) return;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast.error("Speech recognition is not supported in this browser");
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "en-US";
+    recognition.continuous = true;
+    recognition.interimResults = true;
+
+    recognition.onstart = () => {
+      setIsListening(true);
+      // Immediately stop AI speech when user starts speaking
+      stopSpeaking();
+    };
+
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
+      // Process interim results to detect when user starts speaking
+      const lastResult = event.results[event.results.length - 1];
+      if (!lastResult.isFinal) {
+        // User is speaking, stop AI immediately
+        stopSpeaking();
+      } else {
+        // Final result, process the transcript
+        const transcript = lastResult[0].transcript.trim();
+        if (transcript) {
+          handleVoiceInput(transcript);
+        }
+      }
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+      if (event.error !== 'no-speech') {
+        toast.error("Voice recognition error: " + event.error);
+      }
+    };
+
+    recognition.onend = () => {
+      if (isListening && isConversationActive) {
+        try {
+          recognition.start();
+        } catch (error) {
+          setIsListening(false);
+        }
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+    };
+  }, [isConversationActive]);
   
   // Process the audio queue
   const processAudioQueue = async () => {
@@ -84,6 +146,13 @@ const Home = () => {
         URL.revokeObjectURL(item.url);
         isProcessingQueue.current = false;
         processAudioQueue();
+      };
+
+      // Stop audio if user starts speaking or conversation is stopped
+      audio.onpause = () => {
+        URL.revokeObjectURL(item.url);
+        isProcessingQueue.current = false;
+        setIsSpeaking(false);
       };
       
       await audio.play();
@@ -252,24 +321,25 @@ const Home = () => {
   
   // Function to stop speaking
   const stopSpeaking = () => {
+    // Immediately stop current audio
     if (currentAudio.current) {
       currentAudio.current.pause();
       currentAudio.current = null;
     }
     
-    // Clear audio queue
+    // Clear audio queue and release all object URLs
     audioQueue.current.forEach(item => {
       URL.revokeObjectURL(item.url);
     });
     audioQueue.current = [];
     textToProcessQueue.current = [];
     
-    // Reset processing state
+    // Reset all processing states
     isProcessingQueue.current = false;
     isProcessingTextQueue.current = false;
     setIsSpeaking(false);
     
-    // Clear any pending chunks
+    // Clear any pending chunks and timeouts
     if (chunkTimeout.current) {
       clearTimeout(chunkTimeout.current);
       chunkTimeout.current = null;
@@ -345,9 +415,8 @@ const Home = () => {
   
   const handleFileUpload = async (file: File) => {
     try {
-      setPdfFile(file);
+      setSelectedDocument(file);
       const response = await uploadDocument(file);
-      setSelectedDocument(response?.data);
       refetchAllDocuments();
       toast.success(response?.message || `${file.name} uploaded successfully`);
     } catch (error: any) {
@@ -363,11 +432,8 @@ const Home = () => {
     await handleFileUpload(file);
   };
   
-  const handleSend = async (userQuery: string = inputText) => {
+  const handleSend = async (userQuery: string) => {
     if (!userQuery.trim() || isLoading) return;
-    
-    // Add user message to chat
-    setMessages((prev) => [...prev, { text: userQuery, sender: "user" }]);
     
     // Stop any current speech
     if (isSpeaking) {
@@ -378,66 +444,8 @@ const Home = () => {
     rateLimitDelay.current = 250;
     
     // Send query via socket service
-    socketService.current.sendQuery(selectedDocument?.id, userQuery);
-    
-    // Reset input field
-    setInputText("");
+    socketService.current.sendQuery(selectedDocument?.id || '', userQuery);
   };
-  
-  // Enhanced voice input function with interruption capability
-  const handleVoiceInput = () => {
-    // If AI is speaking, stop it first then start voice recognition
-    if (isSpeaking) {
-      stopSpeaking();
-    }
-    
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      toast.error("Speech recognition is not supported in this browser");
-      return;
-    }
-    
-    const recognition = new SpeechRecognition();
-    recognition.lang = "en-US";
-    recognition.start();
-    toast.success("Listening...");
-    
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
-      const transcript = event.results[0][0].transcript;
-      setInputText(transcript);
-      handleSend(transcript);
-    };
-    
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-      if (event.error !== 'no-speech') {
-        toast.error("Voice recognition error: " + event.error);
-      }
-    };
-  };
-  
-  // Function to handle document context for AI
-  const updateDocumentContext = () => {
-    if (selectedDocument && socketService.current.getSocket()) {
-      socketService.current.getSocket()?.emit('setDocumentContext', { documentId: selectedDocument.id });
-    }
-  };
-  
-  // Update document context when selected document changes
-  useEffect(() => {
-    updateDocumentContext();
-  }, [selectedDocument]);
-  
-  // Effect to handle voice change
-  useEffect(() => {
-    // If speaking and voice changes, restart with new voice
-    if (isSpeaking) {
-      stopSpeaking();
-      // Process any remaining text with new voice
-      if (currentChunk.current.trim()) {
-        processTextChunk();
-      }
-    }
-  }, [selectedVoice]);
   
   // ElevenLabs voice options
   const voiceOptions = [
@@ -448,6 +456,39 @@ const Home = () => {
     { id: "EXAVITQu4vr4xnSDxMaL", name: "Bella" },
     { id: "MF3mGyEYCl7XYWbV9V6O", name: "Antoni" },
   ];
+  
+  // Toggle conversation state
+  const toggleConversation = () => {
+    if (!selectedDocument) {
+      toast.error("Please select a document first");
+      return;
+    }
+
+    if (isConversationActive) {
+      // Stop conversation - stop speaking first, then recognition
+      stopSpeaking();
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      setIsListening(false);
+      setIsConversationActive(false);
+    } else {
+      // Start conversation
+      setIsConversationActive(true);
+      setMessages([{ text: "Hello! I'm ready to help you with your document. What would you like to know?", sender: "ai" }]);
+      queueTextForSpeech("Hello! I'm ready to help you with your document. What would you like to know?");
+    }
+  };
+  
+  // Handle user voice input
+  const handleVoiceInput = (transcript: string) => {
+    // Stop any ongoing speech immediately
+    stopSpeaking();
+    
+    // Add user message and send query
+    setMessages(prev => [...prev, { text: transcript, sender: "user" }]);
+    handleSend(transcript);
+  };
   
   return (
     <div className="flex bg-gray-100">
@@ -462,8 +503,8 @@ const Home = () => {
       )}
       <div className="flex flex-col items-center p-6 min-h-screen w-full mt-16">
         <Card className="w-full max-w-lg p-4 shadow-lg rounded-2xl">
-          <h2 className="text-xl font-semibold text-center mb-4">Upload PDF and Chat with AI</h2>
-          <p className="text-sm text-gray-600 mb-4">Selected Document: {selectedDocument?.filename}</p>
+          <h2 className="text-xl font-semibold text-center mb-4">Voice Conversation with AI</h2>
+          <p className="text-sm text-gray-600 mb-4">Selected Document: {selectedDocument?.filename || 'No document selected'}</p>
           <div className="flex gap-4">
             <Upload beforeUpload={() => false} onChange={handleUpload} showUploadList={false}>
               <Button icon={<UploadOutlined />}>Click to Upload PDF</Button>
@@ -471,20 +512,6 @@ const Home = () => {
             <GoogleOAuthProvider clientId={envConstant.GOOGLE_CLIENT_ID}>
               <GoogleDrivePickerButton onFileSelect={handleGoogleDriveFileSelect} buttonText="From Google Drive" />
             </GoogleOAuthProvider>
-          </div>
-          {pdfFile && <p className="mt-2 text-sm text-gray-600">Uploaded: {pdfFile.name}</p>}
-          <div className="mt-4">
-            <p className="text-sm text-gray-600 mb-2">Voice Selection:</p>
-            <Select
-              value={selectedVoice}
-              onChange={setSelectedVoice}
-              className="w-full"
-              disabled={isLoading}
-            >
-              {voiceOptions.map(voice => (
-                <Option key={voice.id} value={voice.id}>{voice.name}</Option>
-              ))}
-            </Select>
           </div>
         </Card>
         <Card className="w-full max-w-lg mt-4 p-4 shadow-lg rounded-2xl">
@@ -511,41 +538,20 @@ const Home = () => {
             )}
             <div ref={messagesEndRef} />
           </div>
-          <div className="flex mt-4">
-            <Input
-              className="flex-1"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Type a message..."
-              onPressEnter={() => handleSend()}
-              disabled={isLoading}
-            />
-            <Button
-              icon={<AudioOutlined />}
-              onClick={handleVoiceInput}
-              className="ml-2"
-              disabled={isLoading}
-              danger={isSpeaking}
-              title={isSpeaking ? "Interrupt AI & Speak" : "Voice Input"}
-            />
-            {isSpeaking && (
-              <Button
-                type="default"
-                danger
-                onClick={stopSpeaking}
-                className="ml-2"
-                title="Stop AI Speaking"
-              >
-                Stop
-              </Button>
-            )}
+          <div className="flex mt-4 justify-between items-center">
+            <div className="flex items-center space-x-4">
+              <div className={`w-3 h-3 rounded-full ${isListening ? 'bg-green-500 animate-pulse' : 'bg-gray-400'}`} />
+              <span className="text-sm text-gray-500">
+                {isListening ? 'Listening...' : 'Not listening'}
+              </span>
+            </div>
             <Button
               type="primary"
-              icon={<SendOutlined />}
-              onClick={() => handleSend()}
-              className="ml-2"
-              loading={isLoading}
-            />
+              onClick={toggleConversation}
+              className={`${isConversationActive ? 'bg-red-500 hover:bg-red-600' : 'bg-blue-500 hover:bg-blue-600'}`}
+            >
+              {isConversationActive ? 'Stop Conversation' : 'Start Conversation'}
+            </Button>
           </div>
         </Card>
       </div>
